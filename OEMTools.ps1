@@ -19,16 +19,29 @@
 # Get the directory the script is running from for local file checks
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-### Utility: Get manufacturer ###
+# Get manufacturer globally and determine silent arguments.
 function Get-ComputerManufacturer {
     try {
-        $cs = Get-CimInstance -ClassName Win32_ComputerSystem
-        return $cs.Manufacturer.Trim()
-    }
-    catch {
-        Write-Error "Could not retrieve computer manufacturer: $($_.Exception.Message)"
+        (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer.Trim()
+    } catch {
+        Write-Warning "Unable to determine manufacturer: $($_.Exception.Message)"
         return ""
     }
+}
+
+# Call function and set variables globally
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole] "Administrator")) {
+    Write-Error "This script must be run as Administrator."
+    exit
+}
+$global:manu = Get-ComputerManufacturer
+Write-Host "Detected manufacturer: $manu"
+
+[string] $global:silentArgs = switch -Regex ($manu) {
+    'Lenovo' { '/VERYSILENT /NORESTARTAPPLICATIONS /NORESTART' ; break }
+    'HP'     { '/s /v"/qn /norestart"' ; break }
+    'Dell'   { '/s /v"/qn /norestart"' ; break }
+    default  { '/s /v"/qn /norestart"' }
 }
 
 ### Utility: run installer with logging and local/download logic ###
@@ -37,7 +50,6 @@ function Install-IfNotPresent {
         [string] $appName,
         [string] $localFileName,
         [string] $downloadUrl,
-        [string] $silentArgs = '/s /v"/qn /norestart"',
         [string] $checkPath = $null
     )
 
@@ -95,13 +107,10 @@ function Install-IfNotPresent {
 
 ### Main logic ###
 function Install-VendorTools {
-    $manu = Get-ComputerManufacturer
     if (-not $manu) {
         Write-Warning "Manufacturer could not be determined. Exiting."
         return
     }
-
-    Write-Host "Detected manufacturer: '$manu'"
     $m = $manu.ToLower()
 
     switch -Wildcard ($m) {
@@ -134,7 +143,7 @@ function Install-VendorTools {
             $hpUrl = "https://ftp.hp.com/pub/softpaq/sp163001-163500/sp163238.exe"
             $hpFile = "sp163238.exe"
             $hpCheck = Join-Path "${env:ProgramFiles}\HP\HP Support Assistant" "HPLauncher.exe"
-            Install-IfNotPresent -appName "HP Support Assistant" -localFileName $hpFile -downloadUrl $hpUrl -checkPath $hpCheck -silentArgs $silentArgs
+            Install-IfNotPresent -appName "HP Support Assistant" -localFileName $hpFile -downloadUrl $hpUrl -checkPath $hpCheck  -silentArgs $silentArgs
         }
 
         "*lenovo*" {
@@ -142,7 +151,7 @@ function Install-VendorTools {
             $lsuUrl = "https://download.lenovo.com/pccbbs/thinkvantage_en/system_update_5.08.03.59.exe"
             $lsuFile = "SystemUpdate.exe"
             $lsuCheck = Join-Path "${env:ProgramFiles}\Lenovo\System Update" "systemupdatetool.exe"
-            Install-IfNotPresent -appName "Lenovo System Update" -localFileName $lsuFile -downloadUrl $lsuUrl -checkPath $lsuCheck
+            Install-IfNotPresent -appName "Lenovo System Update" -localFileName $lsuFile -downloadUrl $lsuUrl -checkPath $lsuCheck -silentArgs $silentArgs
         }
 
         Default {
@@ -150,11 +159,5 @@ function Install-VendorTools {
         }
     }
 }
-
-### Run Script with Elevation Check ###
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole] "Administrator")) {
-    Write-Error "This script must be run as Administrator."
-} else {
-    Install-VendorTools
-    Write-Host "All specified OEM tool checks/installations are complete."
-}
+ Install-VendorTools
+ Write-Host "All specified OEM tool checks/installations are complete."
